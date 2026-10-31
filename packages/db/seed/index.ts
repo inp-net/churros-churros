@@ -21,7 +21,7 @@ import {
 
 // XXX: will break if we change the hashing algorithm (abstracted away in api package but not here)
 import { hash } from 'argon2';
-import { createSlugger, fakeMarkdown, faker, fakeTitle, getRandomLinks, storePicture, uniqueUid, getRandomServices } from './utils.js';
+import { createSlugger, fakeMarkdown, faker, fakeTitle, getRandomLinks, storePicture, uniqueUid, getRandomServices, getLydiaAccountData } from './utils.js';
 
 const prisma = new PrismaClient();
 
@@ -66,20 +66,6 @@ const params = {
   numberOfTicketsPerEvent : 5, //Nombre de tickets par événement à créer dans la DB
   maxNumberOfRegistrationsPerEvent : 100, //Nombre d'inscription max par événement pour un utilisateur aléatoire à créer dans la DB
   numberOfUserCandidates : 50, //Nombre de candidats à l'inscription à créer dans la DB
-}
-
-
-
-let lydiaAccount : LydiaAccount | undefined = undefined;
-if(process.env['SEED_LYDIA_PUBLIC_TOKEN'] && process.env['SEED_LYDIA_PRIVATE_TOKEN']){
-  console.info("Creating lydia account");
-  const lydiaAccountData : Prisma.LydiaAccountCreateInput  = {
-    name: faker.company.name(),
-    privateToken: process.env['SEED_LYDIA_PRIVATE_TOKEN'],
-    vendorToken: process.env['SEED_LYDIA_PUBLIC_TOKEN'],
-  };
-
-  lydiaAccount = await prisma.lydiaAccount.create({ data: lydiaAccountData });
 }
 
 console.info("Creating schools");
@@ -150,8 +136,18 @@ for (const minor of tqdm(minorData)) {
 }
 
 console.info('Creating student associations');
+
 const studentAssociationData: Prisma.StudentAssociationCreateInput[] = [];
+const lydiaAccounts : LydiaAccount[] = [];
 for(let i = 0; i < schools.length; i++){
+
+  const lydiaAccount = await prisma.lydiaAccount.create({
+    data: {
+      ...getLydiaAccountData(),
+    }
+  });
+  lydiaAccounts.push(lydiaAccount);
+
   const name = `AE ${faker.company.buzzNoun()}`;
   studentAssociationData.push({
     name,
@@ -190,7 +186,7 @@ for(let i = 0; i < params.numberOfStudentAssociationSection*params.numberOfSchoo
         data: getRandomLinks(faker.number.int({ min: 0, max: 5 })),
       }
     },
-    lyiaAccounts: { connect: { id: lydiaAccount?.id } }, //la typo est criminelle mais bon faut tout recompiler pr changer donc on attends la nouvelle version de l'api mdr
+    lyiaAccounts: { create: {  ...getLydiaAccountData() } }, //la typo est criminelle mais bon faut tout recompiler pr changer donc on attends la nouvelle version de l'api mdr
   });
 }
 
@@ -239,7 +235,7 @@ for(let i = 0; i < params.numberOfGroupsPerSchool*params.numberOfSchools; i++){
         data: getRandomLinks(faker.number.int({ min: 0, max: 5 })),
       }
     },
-    lyiaAccounts: { connect: { id: lydiaAccount?.id } },
+    lyiaAccounts: { create: {  ...getLydiaAccountData() } },
   });
 }
 
@@ -293,7 +289,7 @@ for(let i = 0; i < params.numberOfSubGroupsPerSchool*params.numberOfSchools; i++
       }
     },
     familyRoot: { connect: { id: parentGroup!.id } },
-    lyiaAccounts: { connect: { id: lydiaAccount?.id } },
+    lyiaAccounts: { create: {  ...getLydiaAccountData() } },
   });
 }
 
@@ -313,7 +309,7 @@ for(let i = 0; i < params.numberOfSchools; i++){
     name: studentAssociations[i]!.name,
     offeredIn: { connect: { id: schools[i]!.id } },
     price: faker.number.int({ min: 30, max: 200 }),
-    beneficiary: {connect: { id: lydiaAccount?.id }},
+    beneficiary: {connect: { id: lydiaAccounts[i]?.id }}, //On prend le compte Lydia de l'asso étudiante pour que les cotisations aillent bien sur le compte de l'asso
   });
 }
 

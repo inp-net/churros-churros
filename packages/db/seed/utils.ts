@@ -45,6 +45,21 @@ export function getRandomServices(count: number): Prisma.ServiceCreateInput[] {
 }
 
 /**
+ * Renvoie un objet LydiaAccountCreateInput si les variables d'environnement SEED_LYDIA_PUBLIC_TOKEN et SEED_LYDIA_PRIVATE_TOKEN sont définies, sinon renvoie undefined
+ * @returns un objet LydiaAccountCreateInput avec les infos de l'account Lydia ou undefined
+ */
+export function getLydiaAccountData(): Prisma.LydiaAccountCreateInput | undefined {
+  if(process.env['SEED_LYDIA_PUBLIC_TOKEN'] && process.env['SEED_LYDIA_PRIVATE_TOKEN']){
+    return {
+      name: faker.company.name(),
+      vendorToken: process.env['SEED_LYDIA_PUBLIC_TOKEN'],
+      privateToken: process.env['SEED_LYDIA_PRIVATE_TOKEN'],
+    };
+  }
+  return undefined;
+}
+
+/**
  * Génère un titre aléatoire avec un nombre de mots compris entre min et max
  * La première lettre est en majuscule (utilise lorem.words de faker)
  * @param min nombre minimum de mots
