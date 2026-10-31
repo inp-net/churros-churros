@@ -19,14 +19,14 @@ import {
   type User,
 } from '../src/client/default.js';
 
-// XXX: will break if we change the hashing algorithm (abstracted away in api package but not here)
-import { hash } from 'argon2';
 import { createSlugger, fakeMarkdown, faker, fakeTitle, getRandomLinks, storePicture, uniqueUid, getRandomServices, getLydiaAccountData } from './utils.js';
 
 const prisma = new PrismaClient();
 
 const now = new Date();
-const passwordHash = await hash('lovechurros');
+// On met le mdp par défaut à lovechurros pour tous les users, ou SEED_PASSWORD_HASH si defini.
+// Permet de retirer la dépendance à argon2 pour le seed
+const passwordHash = process.env['SEED_PASSWORD_HASH'] ?? "$argon2id$v=19$m=65536,t=3,p=4$B/AdMNOlXhcmUBebMq0thw$7YgrMXB3Ve1OvNyaEg6EOEfXbEy5hmyD1GOQEmnQecw";
 const skipPictures = process.env["SEED_SKIP_PICTURES"] === "true";
 
 const schoolSlug = createSlugger();
