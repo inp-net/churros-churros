@@ -1,6 +1,5 @@
 import { Redis } from 'ioredis';
 import { exit } from 'node:process';
-import slug from 'slug';
 import { tqdm } from 'ts-tqdm';
 import {
   CredentialType,
@@ -10,6 +9,7 @@ import {
   type ContributionOption,
   type Event,
   type Group,
+  type LydiaAccount,
   type Major,
   type Minor,
   type Prisma,
@@ -21,12 +21,19 @@ import {
 
 // XXX: will break if we change the hashing algorithm (abstracted away in api package but not here)
 import { hash } from 'argon2';
-import { fakeMarkdown, faker, fakeTitle, getRandomLinks, storePicture, uniqueUid } from './utils.js';
+import { createSlugger, fakeMarkdown, faker, fakeTitle, getRandomLinks, storePicture, uniqueUid, getRandomServices } from './utils.js';
 
 const prisma = new PrismaClient();
 
 const now = new Date();
 const passwordHash = await hash('lovechurros');
+const skipPictures = process.env["SEED_SKIP_PICTURES"] === "true";
+
+const schoolSlug = createSlugger();
+const majorSlug = createSlugger();
+const minorSlug = createSlugger();
+const studentAssociationSlug = createSlugger();
+const groupSlug = createSlugger();
 
 // console.info(`Cleaning storage root ${storageRootDirectory}`);
 // for (const folder of ['events']) {
@@ -39,16 +46,8 @@ const passwordHash = await hash('lovechurros');
 // }
 
 console.info('Clearing redis cache');
-const redis = new Redis({
-  host: new URL(process.env['REDIS_URL'] || 'redis://localhost:6379').hostname,
-  port: Number.parseInt(new URL(process.env['REDIS_URL'] || 'redis://localhost:6379').port),
-});
-await redis.keys('*').then((keys) => {
-  const pipeline = redis.pipeline();
-  keys.forEach((key) => pipeline.del(key));
-  pipeline.exec();
-  console.info(`Deleted ${keys.length} keys`);
-});
+const redis = new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379');
+await redis.flushdb();
 
 const params = {
   numberOfSchools : 4, //Nombre d'école dans la DB de test
@@ -66,6 +65,21 @@ const params = {
   maxNumberOfEventsPerGroup : 10, //Nombre d'événement max par groupe à créer dans la DB
   numberOfTicketsPerEvent : 5, //Nombre de tickets par événement à créer dans la DB
   maxNumberOfRegistrationsPerEvent : 100, //Nombre d'inscription max par événement pour un utilisateur aléatoire à créer dans la DB
+  numberOfUserCandidates : 50, //Nombre de candidats à l'inscription à créer dans la DB
+}
+
+
+
+let lydiaAccount : LydiaAccount | undefined = undefined;
+if(process.env['SEED_LYDIA_PUBLIC_TOKEN'] && process.env['SEED_LYDIA_PRIVATE_TOKEN']){
+  console.info("Creating lydia account");
+  const lydiaAccountData : Prisma.LydiaAccountCreateInput  = {
+    name: faker.company.name(),
+    privateToken: process.env['SEED_LYDIA_PRIVATE_TOKEN'],
+    vendorToken: process.env['SEED_LYDIA_PUBLIC_TOKEN'],
+  };
+
+  lydiaAccount = await prisma.lydiaAccount.create({ data: lydiaAccountData });
 }
 
 console.info("Creating schools");
@@ -76,9 +90,9 @@ for(let i = 0; i < params.numberOfSchools; i++){
   const name = faker.company.buzzNoun();
   schoolsData.push({
     name,
-    uid: slug(name),
+    uid: schoolSlug(name),
     color: faker.color.rgb(),
-    //TODO : Ajouter les services
+    services: { createMany : { data: getRandomServices(faker.number.int({ min: 1, max: 5 })) } },
   });
 }
 
@@ -98,7 +112,7 @@ for(let i = 0; i < params.numberOfMajorsPerSchool*params.numberOfSchools; i++){
   const name = faker.lorem.words({ min: 2, max: 5 });
   majorData.push({
     name,
-    uid: slug(name),
+    uid: majorSlug(name),
     shortName: name.slice(0,5), //Pas vraiment representatif du vrai use case mais ça y est
     discontinued: Math.floor(i / schools.length) === 0,
     schools: { connect: { id: schools[i % schools.length]!.id } },
@@ -120,7 +134,7 @@ for(let i = 0; i < params.numberOfMinorsPerMajor*params.numberOfMajorsPerSchool*
   const name = faker.animal.petName();
   minorData.push({
     name,
-    slug: slug(name+i), //pr eviter les doublons de slug
+    slug: minorSlug(name), 
     majors: { connect: [{ id: majors[i % majors.length]!.id }] },
     yearTier: faker.helpers.arrayElement([1, 2, 3]), //On met des années random pour les spécialités
   });
@@ -142,10 +156,10 @@ for(let i = 0; i < schools.length; i++){
   studentAssociationData.push({
     name,
     school: { connect: { id: schools[i]!.id } },
-    uid: slug(name),
+    uid: studentAssociationSlug(name),
     description: faker.company.catchPhrase(),
-    //TODO : Ajouter les services
-    //TODO : Voir comment faire pour les comptes lydia pour avoir le secret (nouveau .env ?)
+    services: { createMany : { data: getRandomServices(faker.number.int({ min: 1, max: 5 })) } },
+    lydiaAccounts: { connect: { id: lydiaAccount?.id } },
   });
 }
 
@@ -165,7 +179,7 @@ for(let i = 0; i < params.numberOfStudentAssociationSection*params.numberOfSchoo
   const asso = studentAssociations[i % studentAssociations.length]!;
   studentAssociationSectionData.push({
     name: name,
-    uid: slug(name + ' ' + asso.name),
+    uid: groupSlug(name + '-' + asso.name),
     color: faker.color.rgb(),
     type: GroupType.StudentAssociationSection,
     studentAssociation: { connect: { id: asso.id } },
@@ -176,7 +190,7 @@ for(let i = 0; i < params.numberOfStudentAssociationSection*params.numberOfSchoo
         data: getRandomLinks(faker.number.int({ min: 0, max: 5 })),
       }
     },
-    //TODO : Ajouter les comptes lydia
+    lyiaAccounts: { connect: { id: lydiaAccount?.id } }, //la typo est criminelle mais bon faut tout recompiler pr changer donc on attends la nouvelle version de l'api mdr
   });
 }
 
@@ -188,7 +202,7 @@ for (const group of tqdm(studentAssociationSectionData)) {
     },
   }));
 
-  if (faker.datatype.boolean(0.8)) {
+  if (!skipPictures && faker.datatype.boolean(0.8)) {
     await storePicture({
       folder: 'groups',
       extension: 'png',
@@ -205,7 +219,7 @@ for(let i = 0; i < params.numberOfGroupsPerSchool*params.numberOfSchools; i++){
   const name = faker.commerce.product();
   groupsData.push({
     name: name,
-    uid: slug(name + i),
+    uid: groupSlug(name),
     color: faker.color.rgb(),
     type: faker.helpers.weightedArrayElement([
       { weight: 50, value: GroupType.Club },
@@ -225,7 +239,7 @@ for(let i = 0; i < params.numberOfGroupsPerSchool*params.numberOfSchools; i++){
         data: getRandomLinks(faker.number.int({ min: 0, max: 5 })),
       }
     },
-
+    lyiaAccounts: { connect: { id: lydiaAccount?.id } },
   });
 }
 
@@ -235,7 +249,7 @@ for (const group of tqdm(groupsData)) {
       ...group,
     },
   }));
-  if (faker.datatype.boolean(0.8)) {
+  if (!skipPictures && faker.datatype.boolean(0.8)) {
     await storePicture({
       folder: 'groups',
       extension: 'png',
@@ -261,7 +275,7 @@ for(let i = 0; i < params.numberOfSubGroupsPerSchool*params.numberOfSchools; i++
   const parentGroup = groups[params.numberOfStudentAssociationSection*params.numberOfSchools + i]; //Pr prendre les groupes qui ne sont pas des sections d'assos étudiantes et avec 1 par école
   groupsData.push({
     name: name,
-    uid: slug(name+i),
+    uid: groupSlug(name),
     color: faker.color.rgb(),
     type: faker.helpers.weightedArrayElement([
       { weight: 80, value: GroupType.Club },
@@ -279,6 +293,7 @@ for(let i = 0; i < params.numberOfSubGroupsPerSchool*params.numberOfSchools; i++
       }
     },
     familyRoot: { connect: { id: parentGroup!.id } },
+    lyiaAccounts: { connect: { id: lydiaAccount?.id } },
   });
 }
 
@@ -298,7 +313,7 @@ for(let i = 0; i < params.numberOfSchools; i++){
     name: studentAssociations[i]!.name,
     offeredIn: { connect: { id: schools[i]!.id } },
     price: faker.number.int({ min: 30, max: 200 }),
-    beneficiary: undefined, //TODO : Ajouter les comptes lydia pour les associations étudiantes
+    beneficiary: {connect: { id: lydiaAccount?.id }},
   });
 }
 
@@ -358,7 +373,6 @@ for(let i = 0; i < params.numberOfUsersPerSchool*params.numberOfSchools; i++){
   }
 
   const uid = uniqueUid(firstName, lastName, usedUids);
-  usedUids.add(uid);
 
   //Pour avoir un major random parmi ceux de la même école que la contribution option
   //Avec le min à 0 on prend aussi les majors qui sont discontinued, mettre à 1 pour les eviter
@@ -414,7 +428,7 @@ for (const user of tqdm(usersData)) {
       ...user
     }
   }));
-  if (faker.datatype.boolean(0.65)) {
+  if (!skipPictures && faker.datatype.boolean(0.65)) {
     await storePicture({
       folder: 'users',
       extension: 'jpg',
@@ -441,12 +455,12 @@ for (let i = 0; i < params.numberOfSchools; i++) {
 console.info('Creating group members');
 const groupMembers: Prisma.GroupMemberCreateManyInput[] = [];
 for (const group of groups) {
-  const randomUserIDs = faker.helpers.arrayElements(users, { min: 10, max: 30 });
+  const members = faker.helpers.arrayElements(users, { min: 10, max: 30 });
   //répartition des roles dans le club entre les membres
   groupMembers.push(
     {
       groupId: group.id,
-      memberId: randomUserIDs[0]!.id,
+      memberId: members[0]!.id,
       title: 'Prez',
       president: true,
       canEditArticles: true,
@@ -455,7 +469,7 @@ for (const group of groups) {
     },
     {
       groupId: group.id,
-      memberId: randomUserIDs[1]!.id,
+      memberId: members[1]!.id,
       title: 'Trez',
       treasurer: true,
       canEditArticles: true,
@@ -464,7 +478,7 @@ for (const group of groups) {
     },
     {
       groupId: group.id,
-      memberId: randomUserIDs[2]!.id,
+      memberId: members[2]!.id,
       title: 'VP',
       vicePresident: true,
       canEditArticles: true,
@@ -473,7 +487,7 @@ for (const group of groups) {
     },
     {
       groupId: group.id,
-      memberId: randomUserIDs[3]!.id,
+      memberId: members[3]!.id,
       title: 'Secrétaire',
       canEditArticles: true,
       canEditMembers: true,
@@ -481,16 +495,16 @@ for (const group of groups) {
     },
     {
       groupId: group.id,
-      memberId: randomUserIDs[4]!.id,
+      memberId: members[4]!.id,
       title: 'Respo Com',
       canEditArticles: true,
     }, //on peut continuer a souhait pour créer d'autres membres avec des roles spéciaux si besoin...
   );
-  for (let i = 5; i < randomUserIDs.length; i++) {
+  for (let i = 5; i < members.length; i++) {
     //on ajoute les membres restants
     groupMembers.push({
       groupId: group.id,
-      memberId: randomUserIDs[i]!.id,
+      memberId: members[i]!.id,
       createdAt: faker.date.past({ years: 1 }),
     });
   }
@@ -557,7 +571,7 @@ for(let i = 0; i < groups.length; i++){
 const events : Event[] = [];
 for (const data of tqdm(eventsData)) {
   events.push(await prisma.event.create({ data: { ...data } }));
-  if (faker.datatype.boolean(0.65)) {
+  if (!skipPictures && faker.datatype.boolean(0.65)) {
     await storePicture({
       folder: 'events',
       extension: 'jpg',
@@ -618,43 +632,43 @@ for (let i = 0; i < events.length; i++) {
   }
 }
 
+for (const data of tqdm(registrationData)) await prisma.registration.create({ data });
+
 
 
 await prisma.blockedUid.createMany({
   data: [{ uid: 'admin' }, { uid: 'root' }],
 });
 
-await prisma.ticket
-  .findMany({
-    where: { inviteCode: { not: null } },
-  })
-  .then((tickets) => {
-    for (const ticket of tickets) {
-      console.info(
-        `Ticket ${ticket.id} invite: http://localhost:5173/events/${ticket.eventId.replace(/^e:/, '')}/join/${ticket.inviteCode}`,
-      );
-    }
-  });
+
+for (const ticket of tickets) {
+  console.info(
+    `Ticket ${ticket.id} invite: http://localhost:5173/events/${ticket.eventId.replace(/^e:/, '')}/join/${ticket.inviteCode}`,
+  );
+}
+console.log("Creating user candidates");
 
 await prisma.userCandidate.createMany({
-  data: await Promise.all(Array.from({length: 50}).map(async () => {
+  data: Array.from({length: params.numberOfUserCandidates}).map(() => {
     const name =  {
       firstName: faker.person.firstName(),
       lastName: faker.person.lastName(),
     }
     return {
       ...name,
-      email: faker.internet.email(),
-      churrosPassword: await hash('hahahaha'),
-      ldapPassword: await hash('hahahaha'),
+      email: faker.internet.email({firstName: name.firstName, lastName: name.lastName}),
+      churrosPassword: passwordHash,
+      ldapPassword: passwordHash,
       uid: faker.internet.username(name),
       majorId: faker.helpers.arrayElement(majors).id,
-      apprentice: faker.datatype.boolean(),
-      graduationYear: faker.number.int({min: 2022, max: 2026}),
+      apprentice: faker.datatype.boolean(.3),
+      graduationYear: faker.number.int({min: now.getFullYear()-3, max: now.getFullYear()+3}),
       token: faker.string.uuid(),
       emailValidated: faker.datatype.boolean(0.8)
     } as Prisma.UserCandidateCreateInput
-  }))
+  })
 })
 
+await prisma.$disconnect();
+redis.disconnect();
 exit(0);
