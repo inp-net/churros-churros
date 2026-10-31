@@ -35,16 +35,6 @@ const minorSlug = createSlugger();
 const studentAssociationSlug = createSlugger();
 const groupSlug = createSlugger();
 
-// console.info(`Cleaning storage root ${storageRootDirectory}`);
-// for (const folder of ['events']) {
-//   if (!existsSync(path.join(storageRootDirectory, folder))) continue;
-//   await Promise.all(
-//     readdirSync(path.join(storageRootDirectory, folder))
-//       .filter((file) => statSync(path.join(storageRootDirectory, folder, file)).isFile())
-//       .map(async (file) => rm(path.join(storageRootDirectory, folder, file))),
-//   );
-// }
-
 console.info('Clearing redis cache');
 const redis = new Redis(process.env['REDIS_URL'] ?? 'redis://localhost:6379');
 await redis.flushdb();

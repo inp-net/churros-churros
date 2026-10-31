@@ -5,14 +5,10 @@ import { fakerFR } from '@faker-js/faker';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import slug from 'slug';
-import { pictureDestinationFile, updatePicture } from '../../api/src/lib/pictures.js';
-import { storageRoot } from '../../api/src/lib/storage.js';
 import type { Prisma } from '../src/client/index.js';
 
 export const faker = fakerFR;
 faker.seed(5);
-
-export const storageRootDirectory = storageRoot();
 
 /**
  * Renvoie un array d'objets contenant des liens aléatoires avec un nom et une valeur
@@ -147,7 +143,18 @@ async function downloadRandomPeoplePhoto(): Promise<File> {
   const urls = await getPortraitUrls();
   return fetchImage(faker.helpers.arrayElement(urls), 'profile.jpg');
 }
-type UpdatePictureOptions = Parameters<typeof updatePicture>[0];
+
+//Copié collé pas très clean de l'api, mais on veut pas importer l'api dans le seed pour le job de seeding
+type UpdatePictureOptions = {
+  resource: 'article' | 'event' | 'user' | 'group' | 'school' | 'student-association' | 'photos';
+  folder: string;
+  extension: 'png' | 'jpg';
+  file: File;
+  identifier: string;
+  propertyName?: string;
+  silent?: boolean;
+  root?: string;
+};
 
 export async function storePicture(
   options: Omit<UpdatePictureOptions, 'file' | 'silent' | 'root'> & {
@@ -157,7 +164,10 @@ export async function storePicture(
   },
 ): Promise<string | undefined> {
   const { width = 400, height = 400, kind = 'image', ...pictureOptions } = options;
-
+  const { pictureDestinationFile, updatePicture } = await import('../../api/src/lib/pictures.js');
+  const { storageRoot } = await import('../../api/src/lib/storage.js');
+  const storageRootDirectory = storageRoot();
+  
   const destination = pictureDestinationFile({
     folder: pictureOptions.folder,
     extension: pictureOptions.extension,
